@@ -6,6 +6,10 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+
+from textual import events
+from textual.widgets import Input
 
 from codex_tree import Catalog, Picker, Session, SessionTree, load_catalog, resume_command, visible_sessions
 
@@ -109,7 +113,6 @@ class PickerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(tree.cursor_node.data.id, "child")
                 await pilot.press("left")
                 self.assertFalse(app.nodes["child"].is_expanded)
-                await pilot.press("slash")
                 await pilot.press(*list("refresh"))
                 await pilot.pause()
                 self.assertEqual(app.matches, {"deep"})
@@ -118,18 +121,26 @@ class PickerTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("escape")
                 await pilot.pause()
                 self.assertIs(app.focused, tree)
-                self.assertEqual(app.query_one("#search").value, "")
+                self.assertEqual(app.search_query, "")
                 self.assertIsNone(app.return_value)
-                await pilot.press("slash", *list("refresh"))
-                # Enter in search moves to the tree; it must not launch yet.
-                await pilot.press("enter")
-                self.assertIs(app.focused, tree)
-                self.assertIsNone(app.return_value)
-                await pilot.press("ctrl+l")
+                await pilot.press(*list("refresh"))
                 await pilot.pause()
-                tree.move_cursor(app.nodes["root"])
+                self.assertIs(app.focused, tree)
+                self.assertFalse(app.query(Input))
+                # Typing never transfers focus away from tree navigation.
+                await pilot.press("up")
+                self.assertEqual(tree.cursor_node.data.id, "child")
+                await pilot.press("down")
+                self.assertEqual(tree.cursor_node.data.id, "deep")
+                await pilot.press("left", "left", "left")
+                self.assertEqual(tree.cursor_node.data.id, "root")
+                await pilot.press("right", "right")
+                self.assertEqual(tree.cursor_node.data.id, "child")
+                self.assertIs(app.focused, tree)
+                self.assertEqual(app.search_query, "refresh")
+                # Enter opens the highlighted ancestor directly from search.
                 await pilot.press("enter")
-            self.assertEqual(app.return_value.id, "root")
+            self.assertEqual(app.return_value.id, "child")
 
     async def test_empty_results_and_missing_cwd_do_not_launch(self):
         app = Picker(Path("/"), catalog=self.catalog("/does-not-exist-codex-test"))
@@ -137,12 +148,76 @@ class PickerTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             self.assertIsNone(app.return_value)
-            await pilot.press("slash", *list("no-match"))
+            await pilot.press(*list("no-match"))
             await pilot.pause()
             self.assertFalse(app.matches)
             await pilot.press("enter", "enter")
             self.assertIsNone(app.return_value)
             await pilot.press("escape")
+
+    async def test_printable_keys_search_and_control_shortcuts_work_in_search(self):
+        app = Picker(Path("/"), catalog=self.catalog("/tmp"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press(*list("qrahjkl"), "slash", "space", "x")
+            tree = app.query_one(SessionTree)
+            self.assertEqual(app.search_query, "qrahjkl/ x")
+            self.assertIs(app.focused, tree)
+            await pilot.press("backspace")
+            self.assertEqual(app.search_query, "qrahjkl/ ")
+            await pilot.press("ctrl+a")
+            self.assertTrue(app.include_archived)
+            self.assertEqual(app.search_query, "qrahjkl/ ")
+            with patch.object(app, "action_reload") as refresh:
+                await pilot.press("ctrl+r")
+                refresh.assert_called_once()
+            await pilot.press("ctrl+l")
+            self.assertEqual(app.search_query, "")
+            self.assertIsInstance(app.focused, SessionTree)
+            # Space starts a query too; it no longer toggles a branch.
+            await pilot.press("space", "q")
+            self.assertEqual(app.search_query, " q")
+            with patch.object(app, "exit", wraps=app.exit) as quit_app:
+                await pilot.press("ctrl+c")
+                quit_app.assert_called_once()
+
+    async def test_search_banner_typing_paste_and_delete_keep_tree_focus(self):
+        app = Picker(Path("/"), catalog=self.catalog("/tmp"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            tree = app.query_one(SessionTree)
+            for character in "Az09[]!? /é":
+                app.post_message(events.Key(character, character))
+                await pilot.pause()
+                self.assertIs(app.focused, tree)
+            self.assertEqual(app.search_query, "Az09[]!? /é")
+            await pilot.press("delete", "backspace")
+            self.assertEqual(app.search_query, "Az09[]!? ")
+            app.post_message(events.Paste("pasted text"))
+            await pilot.pause()
+            self.assertEqual(app.search_query, "Az09[]!? pasted text")
+            self.assertIs(app.focused, tree)
+            await pilot.click("#search")
+            await pilot.press("down", "up", "left", "right")
+            self.assertIs(app.focused, tree)
+            await pilot.press("escape", "backspace", "delete")
+            self.assertEqual(app.search_query, "")
+            await pilot.press("ctrl+c")
+
+    async def test_batched_terminal_keys_keep_text_delete_navigation_order(self):
+        from textual._xterm_parser import XTermParser
+
+        app = Picker(Path("/"), catalog=self.catalog("/tmp"), print_id=True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # A terminal read may contain typing, Mac Delete, an arrow, and Enter.
+            # Don't let Pilot's per-key pauses hide event ordering problems.
+            for event in XTermParser().feed("refreshz\x7f\x1b[A\r"):
+                app.post_message(event)
+            await pilot.pause()
+        self.assertEqual(app.search_query, "refresh")
+        self.assertIsNotNone(app.return_value)
+        self.assertEqual(app.return_value.id, "child")
 
     async def test_print_id_can_select_session_with_unavailable_cwd(self):
         app = Picker(Path("/"), catalog=self.catalog("/does-not-exist-codex-test"), print_id=True)

@@ -13,21 +13,24 @@ It also works when invoked by its full path from another directory.
 
 | Key | Action |
 | --- | --- |
-| ↑ / ↓ or k / j | Move between visible conversations |
-| ← / → or h / l | Collapse / expand; move to parent / first child |
-| Space | Toggle the selected branch |
-| Enter | Resume the selected conversation, including parents |
-| / | Search titles, directories, and session IDs |
-| Enter in search | Return focus to the tree |
+| ↑ / ↓ | Move between visible conversations, including while searching |
+| ← / → | Collapse / expand; move to parent / first child, including while searching |
+| Page Up / Page Down | Navigate a page at a time |
+| Enter | Open the selected conversation, including while searching |
+| Any printable character | Start or continue searching titles, directories, and IDs |
+| Backspace / Delete | Remove the last query character (including the Mac Delete key) |
 | Ctrl+L | Clear search and return to the tree |
-| a | Toggle archived conversations |
-| r | Refresh from disk |
+| Ctrl+A | Toggle archived conversations |
+| Ctrl+R | Refresh from disk |
 | Esc in search | Clear search and return to the tree |
-| Esc in tree, q, or Ctrl+C | Quit |
+| Esc in tree with no search, or Ctrl+C anywhere | Quit |
 
 Search is case-insensitive and matches all space-separated terms. Matching conversations retain
 their ancestors in the tree. Missing parents are dimmed placeholders. Roots and siblings are
 sorted by their own most recent activity. Mouse selection highlights an item; Enter launches it.
+Letters such as `q`, `r`, `a`, and `hjkl`, as well as `/` and spaces, are search text.
+The search banner is a plain display; keyboard focus always stays on the tree.
+Typing appends to the query and Backspace/Delete removes its last character.
 
 ```sh
 ./codex-tree --codex-home /path/to/.codex

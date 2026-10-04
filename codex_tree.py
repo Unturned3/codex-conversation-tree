@@ -21,8 +21,9 @@ os.environ.setdefault("ESCDELAY", "25")
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual import events
 from textual.theme import BUILTIN_THEMES
-from textual.widgets import Footer, Header, Input, Static, Tree
+from textual.widgets import Footer, Header, Static, Tree
 from textual.widgets.tree import TreeNode
 
 
@@ -184,15 +185,10 @@ def resume_command(session: Session, executable: str = "codex") -> list[str]:
     return [executable, "resume", "--cd", session.cwd, session.id]
 
 
-class SessionTree(Tree[Session]):
-    BINDINGS = [
-        Binding("left,h", "branch_left", "Collapse", show=False),
-        Binding("right,l", "branch_right", "Expand", show=False),
-        Binding("j", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False),
-        Binding("enter", "app.resume", "Resume"),
-        Binding("space", "toggle_node", "Expand/collapse"),
-    ]
+class SessionTree(Tree[Session], inherit_bindings=False):
+    # The tree keeps focus even while the user edits the search query.
+    # Printable keys (including space and hjkl) always belong to search.
+    BINDINGS = []
 
     def action_branch_left(self) -> None:
         node = self.cursor_node
@@ -216,19 +212,25 @@ class Picker(App[Session | None]):
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen { background: $surface; }
-    #search { margin: 0 1; }
+    #search { margin: 0 1; padding: 0 1; height: 3; border: round $primary-muted; overflow: hidden; }
     #status { height: auto; max-height: 2; margin: 0 2; color: $text-muted; }
     #tree { height: 1fr; margin: 0 1; padding: 0 1; }
     #details { height: 6; padding: 0 2; border-top: solid $primary-muted; overflow-y: auto; }
     """
     BINDINGS = [
-        Binding("slash", "search", "Search"),
+        Binding("up", "navigate('cursor_up')", "Up", show=False, priority=True),
+        Binding("down", "navigate('cursor_down')", "Down", show=False, priority=True),
+        Binding("left", "navigate('branch_left')", "Collapse", show=False, priority=True),
+        Binding("right", "navigate('branch_right')", "Expand", show=False, priority=True),
+        Binding("pageup", "navigate('page_up')", "Page up", show=False, priority=True),
+        Binding("pagedown", "navigate('page_down')", "Page down", show=False, priority=True),
+        Binding("enter", "resume", "Open", priority=True),
         Binding("escape", "escape", "Back / quit", priority=True),
         Binding("ctrl+l", "clear_search", "Clear search", show=False, priority=True),
-        Binding("r", "reload", "Refresh"),
-        Binding("a", "archives", "Archived"),
-        Binding("q", "quit", "Quit"),
-        Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
+        Binding("backspace,delete", "search_backspace", "Delete character", show=False, priority=True),
+        Binding("ctrl+r", "reload", "Refresh", priority=True),
+        Binding("ctrl+a", "archives", "Archived", priority=True),
+        Binding("ctrl+c", "quit", "Quit", priority=True),
     ]
 
     def __init__(self, home: Path, *, include_archived: bool = False, include_subagents: bool = False, print_id: bool = False, theme: str = "ansi-light", catalog: Catalog | None = None):
@@ -244,6 +246,7 @@ class Picker(App[Session | None]):
         self.matches: set[str] = set()
         self.expanded: set[str] | None = None
         self.filtering = False
+        self.search_query = ""
 
     def get_driver_class(self):
         driver = super().get_driver_class()
@@ -256,7 +259,7 @@ class Picker(App[Session | None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Input(placeholder="Search titles, directories, or session IDs…  (/)", id="search")
+        yield Static("Type to search · arrow keys navigate · Enter opens", id="search", markup=False)
         yield Static("Loading conversations…", id="status", markup=False)
         yield SessionTree("Conversations", id="tree")
         yield Static("", id="details", markup=False)
@@ -286,7 +289,7 @@ class Picker(App[Session | None]):
     def rebuild(self) -> None:
         tree = self.query_one(SessionTree)
         selected = tree.cursor_node.data.id if tree.cursor_node and tree.cursor_node.data else None
-        query = self.query_one(Input).value.strip()
+        query = self.search_query.strip()
         if not self.filtering and self.nodes:
             self.expanded = {sid for sid, node in self.nodes.items() if node.is_expanded}
         self.filtering = bool(query)
@@ -327,18 +330,16 @@ class Picker(App[Session | None]):
             while ancestor:
                 ancestor.expand()
                 ancestor = ancestor.parent
-            # Newly added nodes receive their line numbers during layout.
-            self.call_after_refresh(self.restore_cursor, target)
+            # Resolve visible lines now so the next key can navigate immediately,
+            # even when typing and arrows arrive in the same terminal read.
+            tree.get_node_at_line(0)
+            tree.move_cursor(target)
             self.show_details(target.data)
         else:
             self.query_one("#details", Static).update("No matching conversations. Clear the search, show archived sessions, or check --codex-home.")
         suffix = " · archived shown" if self.include_archived else ""
         issues = f" · {len(self.catalog.warnings)} loading warnings" if self.catalog.warnings else ""
         self.query_one("#status", Static).update(f"{len(self.matches)} conversations · {len(visible - self.matches)} ancestors{suffix}{issues}")
-
-    def restore_cursor(self, node: TreeNode[Session]) -> None:
-        if node.data and self.nodes.get(node.data.id) is node:
-            self.query_one(SessionTree).move_cursor(node)
 
     def show_details(self, session: Session) -> None:
         state = "Missing locally" if session.path is None else "Enter to select ID" if self.print_id else "Archived" if session.archived else "Enter to resume"
@@ -365,24 +366,46 @@ class Picker(App[Session | None]):
             return
         self.exit(session)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_event(self, event: events.Event) -> None:
+        # Handle text at the same dispatch stage as priority key bindings.
+        # Bubbling printable keys through widgets can otherwise reorder them
+        # after a following Backspace or arrow key from the same input batch.
+        if isinstance(event, events.Key) and not event.is_forwarded and event.is_printable:
+            self.set_search(self.search_query + (event.character or ""))
+            return
+        if isinstance(event, events.Paste) and not event.is_forwarded:
+            self.set_search(self.search_query + clean(event.text))
+            return
+        await super().on_event(event)
+
+    def set_search(self, query: str) -> None:
+        self.query_one(SessionTree).focus()
+        if query == self.search_query:
+            return
+        self.search_query = query
+        banner = Text("Search: ", style="bold")
+        banner.append(query, style="not bold")
+        self.query_one("#search", Static).update(
+            banner if query else "Type to search · arrow keys navigate · Enter opens"
+        )
         self.rebuild()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.query_one(SessionTree).focus()
+    def action_search_backspace(self) -> None:
+        self.set_search(self.search_query[:-1])
 
-    def action_search(self) -> None:
-        self.query_one(Input).focus()
+    async def action_navigate(self, action: str) -> None:
+        tree = self.query_one(SessionTree)
+        tree.get_node_at_line(0)
+        await tree.run_action(action)
 
     def action_escape(self) -> None:
-        if isinstance(self.focused, Input):
+        if self.search_query:
             self.action_clear_search()
         else:
             self.exit()
 
     def action_clear_search(self) -> None:
-        self.query_one(Input).value = ""
-        self.query_one(SessionTree).focus()
+        self.set_search("")
 
     def action_archives(self) -> None:
         self.include_archived = not self.include_archived
