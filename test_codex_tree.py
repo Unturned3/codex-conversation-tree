@@ -11,7 +11,7 @@ from unittest.mock import patch
 from textual import events
 from textual.widgets import Input
 
-from codex_tree import Catalog, Picker, Session, SessionTree, exact_matches, fuzzy_matches, load_catalog, resume_command, visible_sessions
+from codex_conversation_tree.cli import Catalog, Picker, Session, SessionTree, exact_matches, fuzzy_matches, load_catalog, resume_command, visible_sessions
 
 
 class SearchTests(unittest.TestCase):
@@ -287,7 +287,7 @@ class PickerTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipUnless(os.name == "posix", "POSIX terminal driver")
 class TerminalInputTests(unittest.TestCase):
     def test_fragmented_input_and_idle_shutdown(self):
-        from terminal_driver import ResponsiveLinuxDriver
+        from codex_conversation_tree.terminal_driver import ResponsiveLinuxDriver
 
         read_fd, write_fd = os.pipe()
         driver = ResponsiveLinuxDriver.__new__(ResponsiveLinuxDriver)

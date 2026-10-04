@@ -2,6 +2,31 @@
 
 Browse local Codex conversations as a tree of forks, then press Enter to resume one.
 
+Install directly from your GitHub repository after pushing (replace `YOURNAME/codex-tree`
+with your repository):
+
+```sh
+uv tool install --upgrade "git+https://github.com/YOURNAME/codex-tree.git@main"
+```
+
+This command can go in your dotfiles bootstrap script. If uv's tool directory is not on
+your PATH, run `uv tool update-shell` once and open a new shell. You can then run
+`codex-tree` from any directory. To update the installed tool:
+
+```sh
+uv tool upgrade codex-conversation-tree
+```
+
+The distribution name is `codex-conversation-tree`; its executable is `codex-tree`.
+The install URL can use a release tag or commit instead of `main` to select a specific
+revision. Each machine still needs its own Codex installation and local sessions.
+
+To install from a local checkout instead:
+
+```sh
+uv tool install .
+```
+
 Requires [uv](https://docs.astral.sh/uv/) and `codex` on your PATH. From this directory:
 
 ```sh
@@ -41,7 +66,7 @@ Letters such as `q`, `r`, `a`, and `hjkl`, as well as `/` and spaces, are search
 The search banner is a plain display; keyboard focus always stays on the tree.
 Typing appends to the query and Backspace/Delete removes its last character.
 
-The original exact matcher remains in `codex_tree.py` as `exact_matches`, with a commented
+The original exact matcher remains in `src/codex_conversation_tree/cli.py` as `exact_matches`, with a commented
 alternative assignment next to `matches_session` for easily restoring the old behavior.
 
 ```sh
@@ -63,7 +88,7 @@ export CODEX_TREE_THEME=catppuccin-latte
 ```
 
 `--theme` takes precedence over the environment variable. For finer styling, edit
-`Picker.CSS` in `codex_tree.py`; its colors use Textual theme variables such as
+`Picker.CSS` in `src/codex_conversation_tree/cli.py`; its colors use Textual theme variables such as
 `$surface`, `$text-muted`, and `$primary-muted`.
 
 On POSIX terminals, a small Textual driver subclass reduces input polling and
@@ -96,3 +121,9 @@ Run the loader and headless keyboard tests with:
 ```sh
 uv run --locked python -m unittest -v
 ```
+
+Build the wheel and source distribution with `uv build`. Packaging uses the native
+`uv_build` backend. Direct dependencies are pinned to the tested versions in
+`pyproject.toml`; `uv.lock` also records the transitive dependencies for development.
+Tool installations resolve package metadata and do not use the repository's lockfile.
+When updating dependencies, update the pins, run `uv lock`, and rerun the tests.

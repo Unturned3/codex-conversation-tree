@@ -1,4 +1,4 @@
-"""Read-only local Codex session browser. Run with ./codex-tree."""
+"""Read-only local Codex session browser. Run with codex-tree."""
 
 from __future__ import annotations
 
@@ -292,7 +292,7 @@ class Picker(App[Session | None]):
     def get_driver_class(self):
         driver = super().get_driver_class()
         if os.name == "posix":
-            from terminal_driver import LinuxDriver, ResponsiveLinuxDriver
+            from .terminal_driver import LinuxDriver, ResponsiveLinuxDriver
 
             if driver is LinuxDriver:
                 return ResponsiveLinuxDriver

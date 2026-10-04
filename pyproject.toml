@@ -2,11 +2,20 @@
 name = "codex-conversation-tree"
 version = "0.1.0"
 description = "Browse and resume local Codex conversations by fork ancestry"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "rapidfuzz>=3.14,<4",
-    "textual>=6",
+    "rapidfuzz==3.14.6",
+    "rich==15.0.0",
+    "textual==8.2.8",
 ]
 
-[tool.uv]
-package = false
+[project.scripts]
+codex-tree = "codex_conversation_tree.cli:main"
+
+[build-system]
+requires = ["uv_build==0.11.15"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-include = ["test_codex_tree.py", "codex-tree", "uv.lock"]
