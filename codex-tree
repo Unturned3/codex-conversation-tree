@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$script_dir/.uv-cache}"
+exec uv run --locked --project "$script_dir" python "$script_dir/codex_tree.py" "$@"
