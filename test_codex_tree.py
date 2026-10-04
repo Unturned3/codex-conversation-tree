@@ -11,7 +11,44 @@ from unittest.mock import patch
 from textual import events
 from textual.widgets import Input
 
-from codex_tree import Catalog, Picker, Session, SessionTree, load_catalog, resume_command, visible_sessions
+from codex_tree import Catalog, Picker, Session, SessionTree, exact_matches, fuzzy_matches, load_catalog, resume_command, visible_sessions
+
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.session = Session("e9c7a1b2", title="Refresh authentication tokens", cwd="/srv/projects/auth-service", path=Path("session.jsonl"))
+
+    def test_typos_prefixes_and_out_of_order_terms(self):
+        for query in (
+            "refersh", "authetication", "refersh tok", "tok refersh",
+            "refesh", "refqresh", "refxesh", "authet", "REFRESH AUTH",
+            "servcie", "authxnticxtion", "uthentication",
+        ):
+            with self.subTest(query=query):
+                self.assertTrue(fuzzy_matches(self.session, query.casefold().split()))
+
+    def test_budget_limits_and_every_term_required(self):
+        for query in ("rz", "rexrxsh", "xuthxnticxtion", "refersh unrelated"):
+            with self.subTest(query=query):
+                self.assertFalse(fuzzy_matches(self.session, query.split()))
+        self.assertTrue(fuzzy_matches(self.session, ["re"]))
+
+    def test_ids_and_punctuation_are_literal_and_old_matcher_is_retained(self):
+        self.assertTrue(fuzzy_matches(self.session, ["e9c7"]))
+        self.assertFalse(fuzzy_matches(self.session, ["e9c8"]))
+        self.assertTrue(fuzzy_matches(self.session, ["auth-service"]))
+        self.assertFalse(fuzzy_matches(self.session, ["auth-servicf"]))
+        self.assertTrue(exact_matches(self.session, ["refresh", "tok"]))
+        self.assertFalse(exact_matches(self.session, ["refersh", "tok"]))
+
+    def test_fuzzy_results_keep_ancestors_and_respect_visibility(self):
+        root = Session("root", title="Original", path=Path("root.jsonl"))
+        self.session.parent_id = root.id
+        archived = Session("archived", title="Refresh", path=Path("archive.jsonl"), archived=True)
+        subagent = Session("agent", title="Refresh", path=Path("agent.jsonl"), subagent=True)
+        catalog = Catalog({s.id: s for s in (root, self.session, archived, subagent)})
+        self.assertEqual(visible_sessions(catalog, "refersh"), ({"root", self.session.id}, {self.session.id}))
+        self.assertEqual(visible_sessions(catalog, "refersh", True, True)[1], {self.session.id, "archived", "agent"})
 
 
 class LoaderTests(unittest.TestCase):
@@ -141,6 +178,26 @@ class PickerTests(unittest.IsolatedAsyncioTestCase):
                 # Enter opens the highlighted ancestor directly from search.
                 await pilot.press("enter")
             self.assertEqual(app.return_value.id, "child")
+
+    async def test_exact_initial_selection_without_reordering_fuzzy_results(self):
+        fuzzy = Session("new", title="Tokan refresh", updated=2, cwd="/tmp", path=Path("new.jsonl"))
+        exact = Session("old", title="Token refresh", updated=1, cwd="/tmp", path=Path("old.jsonl"))
+        app = Picker(Path("/"), catalog=Catalog({s.id: s for s in (fuzzy, exact)}), print_id=True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            tree = app.query_one(SessionTree)
+            self.assertEqual(tree.cursor_node.data.id, "new")
+            app.set_search("token")
+            await pilot.pause()
+            self.assertEqual(list(app.nodes), ["new", "old"])
+            self.assertEqual(tree.cursor_node.data.id, "old")
+            await pilot.press("up")
+            self.assertEqual(tree.cursor_node.data.id, "new")
+            app.set_search("token ref")
+            await pilot.pause()
+            self.assertEqual(tree.cursor_node.data.id, "new")
+            await pilot.press("enter")
+        self.assertEqual(app.return_value.id, "new")
 
     async def test_empty_results_and_missing_cwd_do_not_launch(self):
         app = Picker(Path("/"), catalog=self.catalog("/does-not-exist-codex-test"))

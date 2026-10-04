@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ import sys
 os.environ.setdefault("ESCDELAY", "25")
 
 from rich.text import Text
+from rapidfuzz.distance import DamerauLevenshtein
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual import events
@@ -61,6 +63,13 @@ class Session:
     path: Path | None = None
     archived: bool = False
     subagent: bool = False
+    search_text: str = field(init=False, repr=False)
+    search_words: tuple[str, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.search_text = f"{self.title} {self.cwd} {self.id}".casefold()
+        # Cache normalized words once per load. IDs deliberately stay literal.
+        self.search_words = tuple(dict.fromkeys(re.findall(r"[^\W_]+", f"{self.title} {self.cwd}".casefold())))
 
     @property
     def label(self) -> str:
@@ -157,6 +166,38 @@ def load_catalog(home: Path) -> Catalog:
     return catalog
 
 
+def exact_matches(session: Session, terms: list[str]) -> bool:
+    """Original search: every query term must be a literal substring."""
+    return all(term in session.search_text for term in terms)
+
+
+@lru_cache(maxsize=32768)
+def fuzzy_word_matches(term: str, word: str) -> bool:
+    budget = 0 if len(term) < 3 else 1 if len(term) < 8 else 2
+    if not budget or not term.isalnum():
+        return False
+    # Compare only plausible prefix lengths; the untyped ending isn't a typo.
+    # Damerau-Levenshtein counts an adjacent-letter swap as one error.
+    for length in range(max(1, len(term) - budget), min(len(word), len(term) + budget) + 1):
+        if DamerauLevenshtein.distance(term, word[:length], score_cutoff=budget) <= budget:
+            return True
+    return False
+
+
+def fuzzy_matches(session: Session, terms: list[str]) -> bool:
+    return all(
+        term in session.search_text
+        or any(fuzzy_word_matches(term, word) for word in session.search_words)
+        for term in terms
+    )
+
+
+matches_session = fuzzy_matches
+# Original exact-substring behavior, retained as an inactive alternative.
+# To restore it, replace the assignment above with:
+# matches_session = exact_matches
+
+
 def visible_sessions(catalog: Catalog, query: str = "", include_archived: bool = False, include_subagents: bool = False) -> tuple[set[str], set[str]]:
     terms = query.casefold().split()
     matches = {
@@ -164,7 +205,7 @@ def visible_sessions(catalog: Catalog, query: str = "", include_archived: bool =
         if s.path is not None
         and (include_archived or not s.archived)
         and (include_subagents or not s.subagent)
-        and all(term in f"{s.title} {s.cwd} {s.id}".casefold() for term in terms)
+        and matches_session(s, terms)
     }
     visible = set(matches)
     for sid in matches:
@@ -290,6 +331,7 @@ class Picker(App[Session | None]):
         tree = self.query_one(SessionTree)
         selected = tree.cursor_node.data.id if tree.cursor_node and tree.cursor_node.data else None
         query = self.search_query.strip()
+        starting_search = bool(query) and not self.filtering
         if not self.filtering and self.nodes:
             self.expanded = {sid for sid, node in self.nodes.items() if node.is_expanded}
         self.filtering = bool(query)
@@ -322,9 +364,14 @@ class Picker(App[Session | None]):
             self.nodes[session.id] = node
             stack.extend((node, child) for child in reversed(descendants))
         tree.root.expand()
+        exact = {
+            sid for sid in self.matches
+            if exact_matches(self.catalog.sessions[sid], query.casefold().split())
+        }
         target = self.nodes.get(selected)
-        if target is None or (query and selected not in self.matches):
-            target = next((node for sid, node in self.nodes.items() if sid in self.matches), None)
+        if target is None or (query and selected not in self.matches) or (starting_search and exact and selected not in exact):
+            preferred = exact or self.matches
+            target = next((node for sid, node in self.nodes.items() if sid in preferred), None)
         if target:
             ancestor = target.parent
             while ancestor:

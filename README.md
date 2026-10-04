@@ -25,12 +25,24 @@ It also works when invoked by its full path from another directory.
 | Esc in search | Clear search and return to the tree |
 | Esc in tree with no search, or Ctrl+C anywhere | Quit |
 
-Search is case-insensitive and matches all space-separated terms. Matching conversations retain
+Search is case-insensitive and matches all space-separated terms. Exact substrings always
+match. Otherwise, RapidFuzz checks title and directory words (including prefixes) with a
+small typo budget: no errors for 1–2 characters, one for 3–7, and two for 8 or more.
+An inserted, missing, or replaced character counts as one error, as does swapping adjacent
+letters. For example, `refersh tok` matches “Refresh authentication tokens”. Session IDs
+and query terms containing punctuation keep literal substring matching.
+
+Matching conversations retain
 their ancestors in the tree. Missing parents are dimmed placeholders. Roots and siblings are
-sorted by their own most recent activity. Mouse selection highlights an item; Enter launches it.
+sorted by their own most recent activity; fuzzy search does not reorder branches. An exact
+match is preferred when initially selecting a result, and an existing matching selection
+is preserved as you continue typing. Mouse selection highlights an item; Enter launches it.
 Letters such as `q`, `r`, `a`, and `hjkl`, as well as `/` and spaces, are search text.
 The search banner is a plain display; keyboard focus always stays on the tree.
 Typing appends to the query and Backspace/Delete removes its last character.
+
+The original exact matcher remains in `codex_tree.py` as `exact_matches`, with a commented
+alternative assignment next to `matches_session` for easily restoring the old behavior.
 
 ```sh
 ./codex-tree --codex-home /path/to/.codex
