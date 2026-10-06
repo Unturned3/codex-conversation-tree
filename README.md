@@ -66,6 +66,8 @@ Letters such as `q`, `r`, `a`, and `hjkl`, as well as `/` and spaces, are search
 The search banner is a plain display; keyboard focus always stays on the tree.
 Typing appends to the query and Backspace/Delete removes its last character.
 
+The summary bar counts conversations matching the current search and visibility filters.
+
 The original exact matcher remains in `src/codex_conversation_tree/cli.py` as `exact_matches`, with a commented
 alternative assignment next to `matches_session` for easily restoring the old behavior.
 

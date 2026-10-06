@@ -254,7 +254,11 @@ class Picker(App[Session | None]):
     CSS = """
     Screen { background: $surface; }
     #search { margin: 0 1; padding: 0 1; height: 3; border: round $primary-muted; overflow: hidden; }
-    #status { height: auto; max-height: 2; margin: 0 2; color: $text-muted; }
+    #status {
+        height: auto; max-height: 3; margin: 0 1; padding: 0 1;
+        color: $text; background: $panel; text-style: bold;
+        border-bottom: solid $primary-muted;
+    }
     #tree { height: 1fr; margin: 0 1; padding: 0 1; }
     #details { height: 6; padding: 0 2; border-top: solid $primary-muted; overflow-y: auto; }
     """
@@ -265,7 +269,7 @@ class Picker(App[Session | None]):
         Binding("right", "navigate('branch_right')", "Expand", show=False, priority=True),
         Binding("pageup", "navigate('page_up')", "Page up", show=False, priority=True),
         Binding("pagedown", "navigate('page_down')", "Page down", show=False, priority=True),
-        Binding("enter", "resume", "Open", priority=True),
+        Binding("enter", "resume", "Open", key_display="Enter", priority=True),
         Binding("escape", "escape", "Back / quit", priority=True),
         Binding("ctrl+l", "clear_search", "Clear search", show=False, priority=True),
         Binding("backspace,delete", "search_backspace", "Delete character", show=False, priority=True),
@@ -386,12 +390,13 @@ class Picker(App[Session | None]):
             self.query_one("#details", Static).update("No matching conversations. Clear the search, show archived sessions, or check --codex-home.")
         suffix = " · archived shown" if self.include_archived else ""
         issues = f" · {len(self.catalog.warnings)} loading warnings" if self.catalog.warnings else ""
-        self.query_one("#status", Static).update(f"{len(self.matches)} conversations · {len(visible - self.matches)} ancestors{suffix}{issues}")
+        self.query_one("#status", Static).update(f"{len(self.matches)} conversations{suffix}{issues}")
 
     def show_details(self, session: Session) -> None:
-        state = "Missing locally" if session.path is None else "Enter to select ID" if self.print_id else "Archived" if session.archived else "Enter to resume"
+        state = "Missing locally" if session.path is None else "Archived" if session.archived else ""
+        suffix = f"   ·   {state}" if state else ""
         self.query_one("#details", Static).update(
-            f"{session.label}\nDirectory: {clean(session.cwd) or '—'}\nSession: {clean(session.id)}\nParent: {clean(session.parent_id) or '—'}   ·   {state}"
+            f"{session.label}\nDirectory: {clean(session.cwd) or '—'}\nSession: {clean(session.id)}\nParent: {clean(session.parent_id) or '—'}{suffix}"
         )
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
